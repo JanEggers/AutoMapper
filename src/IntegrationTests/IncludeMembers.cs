@@ -1006,3 +1006,93 @@ public class CascadedIncludeMembers : IntegrationTest<CascadedIncludeMembers.Dat
         }
     }
 }
+
+public class IncludeOnlySelectedMembers : IntegrationTest<IncludeOnlySelectedMembers.DatabaseInitializer>
+{
+    public class Source
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public InnerSource InnerSource { get; set; }
+        public OtherInnerSource OtherInnerSource { get; set; }
+        public int ImNotIncluded { get; set; }
+    }
+
+    public class SourceA : Source
+    {
+        public List<InnerSourceA> InnerSourcesA { get; set; } = new List<InnerSourceA>();
+    }
+
+    public class InnerSourceA
+    {
+        public int Id { get; set; }
+        public int ImNotIncludedA { get; set; }
+        public string IAmIncluded { get; set; }
+    }
+    public class InnerSource
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+    }
+    public class OtherInnerSource
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public string Title { get; set; }
+    }
+    public class Destination
+    {
+        public int Id { get; set; }
+        public string Name { get; set; }
+        public string Description { get; set; }
+        public string IAmIncluded { get; set; }
+    }
+
+    public class Context : LocalDbContext
+    {
+        public DbSet<Source> Sources { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<SourceA>();
+        }
+    }
+
+    public class DatabaseInitializer : DropCreateDatabaseAlways<Context>
+    {
+        protected override void Seed(Context context)
+        {
+            var sourceC = new SourceA { Name = "name3", InnerSource = new InnerSource { Description = "description" }, OtherInnerSource = new OtherInnerSource { Title = "title" }, InnerSourcesA = { new InnerSourceA { IAmIncluded = "a" } } };
+            context.Sources.Add(sourceC);
+            base.Seed(context);
+        }
+    }
+
+    protected override MapperConfiguration CreateConfiguration() => new(cfg =>
+    {
+        cfg.CreateMap<Source, Destination>(MemberList.None).IncludeMembers(s => s.InnerSource, s => s.OtherInnerSource);
+        cfg.CreateMap<SourceA, Destination>(MemberList.None).IncludeMembers(s => s.Id == 1 ? s.InnerSourcesA.FirstOrDefault() : null);
+        cfg.CreateMap<InnerSourceA, Destination>(MemberList.None);
+        cfg.CreateMap<InnerSource, Destination>(MemberList.None);
+        cfg.CreateMap<OtherInnerSource, Destination>(MemberList.None);
+    });
+    [Fact]
+    public void Should_flatten()
+    {
+        using (var context = new Context())
+        {
+            var projectTo = ProjectTo<Destination>(context.Sources.OfType<SourceA>().OrderBy(p => p.Name));
+            var query = projectTo.ToQueryString();
+            query.ShouldNotContain(nameof(Source.ImNotIncluded));
+
+            var resultC = projectTo.Single();
+            resultC.Name.ShouldBe("name3");
+            resultC.Description.ShouldBe("description");
+            resultC.IAmIncluded.ShouldBe("a");
+        }
+    }
+}
